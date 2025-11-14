@@ -1,5 +1,114 @@
 ---
-title: Dashboard
+title: "Gerrymandering Project Dashboard"
 format: dashboard
 ---
 
+
+```{r}
+#Set up 
+library(tidyverse)
+library(ggplot2)
+library(sf)
+library(janitor)
+
+ab604_results <- read_csv("data/ab604_cd_results.csv")
+results_2024 <- read_csv("data/g24_sov_by_g24_svprec_clean.csv")
+
+ab604_results |> 
+    clean_names()
+results_2024 |> 
+    clean_names()
+
+results_2024 <- results_2024 |>
+    rename(dem_total = demvote, rep_total = repvote)
+
+ab604_results <- ab604_results |>
+    rename(dem_total = uspdem01, rep_total = usprep01)
+
+
+```
+```{r}
+#Metric Functions
+wasted_votes <- function(votes_a, votes_b) {
+total <- votes_a + votes_b
+needed <- floor(total / 2) + 1
+ifelse(votes_a > votes_b, votes_a - needed, votes_a)
+}
+
+compute_metrics <- function(df, plan_name) {
+    df2 <- df |>
+    mutate( total = dem_total + rep_total, dem_share = dem_total / total) |>
+    filter(total > 0)
+
+n_seats <- nrow(df2)
+dem_seats <- sum(df2$dem_total > df2$rep_total)
+rep_seats <- sum(df2$rep_total > df2$dem_total)
+
+dem_seat_share <- dem_seats / n_seats
+
+mean_dem_share <- mean(df2$dem_share)
+median_dem_share <- median(df2$dem_share)
+mean_median <- mean_dem_share - median_dem_share
+
+wasted_dem <- wasted_votes(df2$dem_total, df2$rep_total)
+wasted_rep <- wasted_votes(df2$rep_total, df2$dem_total)
+
+total_wasted_dem <- sum(wasted_dem)
+total_wasted_rep <- sum(wasted_rep)
+total_two_party_votes <- sum(df2$total)
+
+efficiency_gap <- (total_wasted_rep - total_wasted_dem) / total_two_party_votes
+
+tibble(plan = plan_name, n_seats = n_seats, dem_seats = dem_seats, rep_seats = rep_seats, dem_seat_share = dem_seat_share, mean_median = mean_median, efficiency_gap = efficiency_gap)
+}
+
+metrics_2024 <- compute_metrics(results_2024, "Current 2024 map")
+metrics_ab604 <- compute_metrics(ab604_results, "AB 604 map")
+
+metrics_all <- bind_rows(metrics_2024, metrics_ab604)
+```
+```{r}
+#Read Shape Files 
+cd2024_shp <- st_read("data/shapefiles/tl_2024_06_cd119/tl_2024_06_cd119.shp")
+
+cd2024_shp |>
+    clean_names() |>
+    st_transform(3310)
+
+cd2024_shp <- cd2024_shp |>
+    mutate(GEOID = as.numeric(GEOID))
+
+cd2024_map <- cd2024_shp |>
+    left_join(results_2024, by = c("GEOID" = "cddist")) |> 
+    mutate(total_votes = dem_total + rep_total, dem_share = dem_total / total_votes, winner = case_when(is.na(dem_share) ~ "No Data", dem_share > 0.5 ~ "Democrat", dem_share < 0.5 ~ "Republican", TRUE ~ "Tie"))
+
+ab604_shp <- st_read("data/shapefiles/AB604/AB604.shp")
+
+ab604_shp |> 
+    clean_names() |>
+    st_transform(3310)
+
+ab604_map <- ab604_shp |>
+    left_join(ab604_results, by = c("DISTRICT" = "district")) |> 
+    mutate(total_votes = dem_total + rep_total, dem_share = dem_total / total_votes, winner = case_when(is.na(dem_share) ~ "No Data", dem_share > 0.5 ~ "Democrat", dem_share < 0.5 ~ "Republican", TRUE ~ "Tie"))
+```
+```{r}
+#Maps 
+#Current 2024 Districts 
+cd2024_map |> 
+    ggplot() +
+    geom_sf(aes(fill = winner), color = NA) +
+    scale_fill_manual( values = c("Democrat" = "#3182bd", "Republican" = "#de2d26", "Tie" = "grey60", "No Data" = "grey85")) +
+    labs(title = "2024 Results: Current Map", fill = "Winner") +
+    theme_minimal()
+#AB604 Districts
+ab604_map |> 
+    ggplot() +
+    geom_sf(aes(fill = winner), color = NA) +
+    scale_fill_manual(values = c("Democrat" = "#3182bd","Republican" = "#de2d26","Tie" = "grey60", "No Data" = "grey85")) +
+    labs(title = "Hypothetical 2024 Results – AB 604", fill = "Winner") +
+    theme_minimal()
+```
+
+Methodology
+For this project I used the SR precinct data on voting from the Statewide Database for the 2024 US House election in California. I joined the SR precinct votes to SR precinct geometries using the sf library. I compared the status quo map to the AB 604 map. For the current map I aggregated percent votes to 2024 congressional districts. For the AB 604 map I used area-weighted interpolation to estimate district level votes. I then computes the mean median vote share and the efficiency gap. 

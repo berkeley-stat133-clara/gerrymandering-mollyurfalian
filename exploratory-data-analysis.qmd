@@ -3,26 +3,53 @@ title: Exploratory Data Analysis
 format: typst
 ---
 
+```{r}
+#Set Up 
+library(tidyverse)
+g24_clean <- read_csv("data/g24_sov_by_g24_svprec_clean.csv")
+precinct_data <- g24_clean |> 
+    filter(!str_detect(svprec, "TOT"))
+```
 ### Question 1
 
-Put your question here.
+Which county had the closest race?
 
 ### Answer 1
 
-Put your answer here.
+```{r}
+county_results <- precinct_data |>
+    group_by(county) |>
+    summarize(dem_votes = sum(demvote, na.rm = TRUE), rep_votes = sum(repvote, na.rm = TRUE)) |>
+    mutate(margin = abs(dem_votes - rep_votes), total_votes = dem_votes + rep_votes, pct_margin = margin /total_votes) |>
+    arrange(margin)
+closest_county <- county_results |>
+    slice(1)
+closest_county
+```
 
 ### Question 2
 
-Put your question here.
+How many SV precincts are in the data set? What is the the min, max and median votes cast?
 
 ### Answer 2
 
-Put your answer here.
+```{r}
+num_precincts <- nrow(precinct_data)
+precinct_data |>
+    summarize(min_total_vote = min(totvote, na.rm = TRUE), median_total_vote = median(totvote, na.rm = TRUE), max_total_vote = max(totvote, na.rm = TRUE))
+```
 
 ### Question 3
 
-Put your question here.
+How does the total ballots vary across counties?
 
 ### Answer 3
 
-Put your answer here.
+
+```{r}
+county_data <- precinct_data |>
+    group_by(county) |>
+    summarize(num_precincts = n(), median_total_vote = median(totvote, na.rm = TRUE), mean_total_vote = mean(totvote, na.rm = TRUE)) |>
+    arrange(desc(median_total_vote))
+county_data
+```

@@ -3,3 +3,95 @@ title: Data Cleaning
 format: typst
 ---
 
+```{r}
+#load libraries
+library(tidyverse)
+library(janitor)
+```
+
+```{r}
+raw_data <- read_csv("data/g24_sov_by_g24_svprec.csv")
+head(raw_data)
+#standardize column names 
+clean_data <- raw_data |> 
+    clean_names()
+#vote counts columns
+vote_cols <- clean_data |>
+    select(matches("vote|ballot|tot|^d_|^r_")) |> 
+    names()
+#make number cols numeric
+clean_data <- clean_data |>
+    mutate(across(all_of(vote_cols), as.numeric))
+#remove empty cols
+clean_data <- clean_data |>
+    select(where(~ !all(is.na(.x))))
+write_csv(clean_data, "data/g24_sov_by_g24_svprec_clean.csv")
+```
+
+###Part 5
+
+```{r}
+library(sf)
+sr_votes_raw <- read_csv("data/state_g24_sov_data_by_g24_srprec.csv")
+
+sr_votes <- sr_votes_raw|>
+  clean_names()
+#identifying key columns
+precinct_col <- "srprec"
+vote_cols <- c("uspdem01", "usprep01")
+
+sr_votes <- sr_votes |>
+  mutate(across(all_of(vote_cols), ~ as.numeric(.)))
+
+```
+
+
+```{r}
+sr_prec_shp <- st_read("data/shapefiles/srprec_state_g24_v01_shp/srprec_state_g24_v01_shp.shp")
+sr_shape <- sr_prec_shp |> 
+    clean_names()
+
+sr_shp <- sr_shape |>
+  st_transform(3310) |>
+  st_set_precision(1) |>
+  st_make_valid() |>
+  st_collection_extract("POLYGON")
+
+sr_geo <- sr_shp |>
+  left_join(sr_votes, by = c("srprec" = "srprec")) |>
+  mutate(sr_area = st_area(geometry))
+```
+
+
+```{r}
+AB604_raw <- st_read("data/shapefiles/AB604/AB604.shp")
+
+ab604 <- AB604_raw |>
+    clean_names() |>
+    st_transform(3310)
+
+cd_id_col <- "district"
+
+sr_cd <- st_intersection(
+  sr_geo |> select(srprec, sr_area, all_of(vote_cols)),
+  ab604 |> select(all_of(cd_id_col))
+) |>
+  mutate(
+    inter_area = st_area(geometry),
+    weight = as.numeric(inter_area / sr_area)
+  )
+
+for (v in vote_cols) {
+  sr_cd[[v]] <- sr_cd[[v]] * sr_cd$weight
+}
+
+ab604_results <- sr_cd |>
+  st_drop_geometry() |>
+  group_by(.data[[cd_id_col]]) |>
+  summarise(across(all_of(vote_cols), sum, na.rm = TRUE)) |>
+  ungroup()
+ab604_results 
+```
+```{r}
+write_csv(ab604_results, "data/ab604_cd_results.csv")
+```
